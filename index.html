@@ -2,37 +2,36 @@
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
-    <title>Real-time Motion App</title>
+    <title>Motion Visualizer Pro</title>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
     <style>
-        body { margin: 0; background: #000; color: #fff; font-family: 'Courier New', Courier, monospace; overflow: hidden; }
+        body { margin: 0; background: #000; color: #fff; font-family: 'Arial Black', sans-serif; overflow: hidden; }
         .container { display: flex; width: 100vw; height: 100vh; }
-        .panel { flex: 1; position: relative; border-right: 1px solid #444; }
+        .panel { flex: 1; position: relative; border-right: 1px solid #222; }
         #right-panel { border-right: none; background: #000; }
-        /* 비디오 숨기기 (캔버스에 직접 그림) */
         #input_video { position: absolute; width: 1px; height: 1px; opacity: 0; }
-        #output_canvas { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
-        .controls { position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%); z-index: 10; }
-        button { background: #fff; border: none; padding: 10px 20px; cursor: pointer; font-weight: bold; text-transform: uppercase; }
-        button:active { background: #ff4444; color: #fff; }
-        .ui-label { position: absolute; top: 10px; left: 10px; font-size: 12px; color: #0f0; text-shadow: 0 0 5px #0f0; }
+        #output_canvas { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); filter: brightness(1.2) contrast(1.1); }
+        .controls { position: absolute; bottom: 30px; left: 50%; transform: translateX(-50%); z-index: 10; }
+        button { background: #fff; border: 2px solid #fff; padding: 12px 24px; cursor: pointer; font-weight: bold; transition: 0.2s; }
+        button:hover { background: #000; color: #fff; }
+        .ui-label { position: absolute; top: 15px; left: 15px; font-size: 10px; color: #ff0055; letter-spacing: 2px; }
     </style>
 </head>
 <body>
 
     <div class="container">
         <div id="left-panel" class="panel">
-            <div class="ui-label">LIVE_FEED_01</div>
+            <div class="ui-label">CAM_INPUT // ANALYSIS</div>
             <video id="input_video" playsinline></video>
             <canvas id="output_canvas"></canvas>
             <div class="controls">
-                <button id="record-btn">REC START</button>
+                <button id="record-btn">RECORD SYSTEM</button>
             </div>
         </div>
         <div id="right-panel" class="panel">
-            <div class="ui-label">VISUALIZER_CORE</div>
+            <div class="ui-label">MOTION_FX // GENERATIVE</div>
             <div id="canvas-holder"></div>
         </div>
     </div>
@@ -43,13 +42,9 @@
         const outCtx = outCanvas.getContext('2d');
         
         let hands, camera;
-        let showEffect = false;
+        let currentMode = "NONE"; // "NONE", "SHUT", "FUCK"
         let particles = [];
-        let isRecording = false;
-        let mediaRecorder;
-        let recordedChunks = [];
 
-        // p5.js (우측 화면)
         function setup() {
             const c = createCanvas(windowWidth / 2, windowHeight);
             c.parent('canvas-holder');
@@ -64,58 +59,71 @@
             hands.setOptions({
                 maxNumHands: 2,
                 modelComplexity: 1,
-                minDetectionConfidence: 0.5,
-                minTrackingConfidence: 0.5
+                minDetectionConfidence: 0.6,
+                minTrackingConfidence: 0.6
             });
 
             hands.onResults(onResults);
 
             camera = new Camera(videoElement, {
                 onFrame: async () => {
-                    // 실시간성 핵심: 프레임마다 hands 데이터를 보냄
                     await hands.send({image: videoElement});
                 },
-                width: 640,
-                height: 480
+                width: 640, height: 480
             });
             camera.start();
         }
 
         function onResults(results) {
-            // 1. 좌측 웹캠 실시간 드로잉 (가장 중요)
             outCanvas.width = videoElement.videoWidth;
             outCanvas.height = videoElement.videoHeight;
-            
             outCtx.save();
             outCtx.clearRect(0, 0, outCanvas.width, outCanvas.height);
             outCtx.drawImage(results.image, 0, 0, outCanvas.width, outCanvas.height);
             outCtx.restore();
 
-            // 2. 포즈 감지 로직
-            showEffect = false;
-            if (results.multiHandLandmarks && results.multiHandLandmarks.length === 2) {
-                let checkCount = 0;
+            // 모션 감지 로직
+            currentMode = "NONE";
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                let shutCount = 0;
+                let fuckCount = 0;
+
                 for (const landmarks of results.multiHandLandmarks) {
-                    // 검지(8), 중지(12), 엄지(4)가 펴져 있는지 간단 체크
-                    if (landmarks[8].y < landmarks[6].y && 
-                        landmarks[12].y < landmarks[10].y && 
-                        landmarks[4].y < landmarks[3].y) {
-                        checkCount++;
+                    // 손가락 상태 체크 (y좌표가 작을수록 위쪽)
+                    const thumbUp = landmarks[4].y < landmarks[3].y;
+                    const indexUp = landmarks[8].y < landmarks[6].y;
+                    const middleUp = landmarks[12].y < landmarks[10].y;
+                    const ringUp = landmarks[16].y < landmarks[14].y;
+                    const pinkyUp = landmarks[20].y < landmarks[18].y;
+
+                    // 1. SHUT 포즈 (엄지, 검지, 중지만 펴짐)
+                    if (thumbUp && indexUp && middleUp && !ringUp && !pinkyUp) {
+                        shutCount++;
+                    }
+                    
+                    // 2. FUCK 포즈 (중지만 펴짐)
+                    if (middleUp && !indexUp && !ringUp && !pinkyUp) {
+                        fuckCount++;
                     }
                 }
-                if (checkCount === 2) showEffect = true;
+
+                if (shutCount >= 2) currentMode = "SHUT";
+                else if (fuckCount >= 1) currentMode = "FUCK";
             }
         }
 
         function draw() {
             background(0);
             
-            if (showEffect) {
-                // 파티클 생성
-                if (particles.length < 120) particles.push(new Part());
+            if (currentMode !== "NONE") {
+                // 입자 생성량 대폭 증가 및 크기 다양화
+                for (let i = 0; i < 5; i++) {
+                    particles.push(new Part(currentMode));
+                }
                 
                 for (let i = particles.length - 1; i >= 0; i--) {
-                    particles[i].run();
+                    particles[i].update(currentMode);
+                    particles[i].show();
                     if (particles[i].isDead()) particles.splice(i, 1);
                 }
 
@@ -123,34 +131,68 @@
                 fill(255);
                 noStroke();
                 textAlign(CENTER, CENTER);
-                textSize(width * 0.08);
-                text("SHUT YOUR BITCH ASS UP", width/2, height/2);
+                
+                if (currentMode === "SHUT") {
+                    textSize(width * 0.07);
+                    text("SHUT YOUR BITCH ASS UP", width/2, height/2);
+                } else if (currentMode === "FUCK") {
+                    textSize(width * 0.15);
+                    fill(255, 0, 80);
+                    text("FUCK YOU", width/2, height/2);
+                }
             } else {
                 particles = [];
             }
         }
 
         class Part {
-            constructor() {
+            constructor(mode) {
                 this.pos = createVector(width/2, height/2);
-                this.vel = p5.Vector.random2D().mult(random(2, 8));
-                this.acc = createVector(0, 0.05);
+                this.vel = p5.Vector.random2D().mult(random(2, 10));
+                this.acc = createVector(0, 0);
                 this.life = 255;
-                this.c = color(random(100,255), random(100,255), 255);
+                this.size = random(3, 15); // 크기 다양화
+                this.angle = random(TWO_PI);
+                this.mode = mode;
+                
+                if (mode === "FUCK") {
+                    this.c = color(random(150, 255), 0, random(50, 150)); // 붉은색 계열
+                } else {
+                    this.c = color(random(100, 255), random(100, 255), 255); // 무지개/푸른색 계열
+                }
             }
-            run() {
-                this.vel.add(this.acc);
+            
+            update(mode) {
+                if (mode === "FUCK") {
+                    // 소용돌이 로직
+                    let r = dist(this.pos.x, this.pos.y, width/2, height/2);
+                    let xOffset = cos(this.angle) * 5;
+                    let yOffset = sin(this.angle) * 5;
+                    this.pos.x += xOffset;
+                    this.pos.y += yOffset;
+                    this.angle += 0.2;
+                    this.vel.mult(1.02); // 점점 빨라짐
+                }
+                
                 this.pos.add(this.vel);
-                this.life -= 5;
+                this.life -= 4;
+            }
+            
+            show() {
                 noStroke();
                 fill(red(this.c), green(this.c), blue(this.c), this.life);
-                ellipse(this.pos.x, this.pos.y, 10);
+                ellipse(this.pos.x, this.pos.y, this.size);
             }
+            
             isDead() { return this.life < 0; }
         }
 
-        // 녹화 로직
+        // 녹화 기능
+        let isRecording = false;
+        let mediaRecorder;
+        let recordedChunks = [];
         const btn = document.getElementById('record-btn');
+        
         btn.onclick = () => {
             if (!isRecording) {
                 const stream = document.querySelector('#canvas-holder canvas').captureStream(30);
@@ -161,15 +203,17 @@
                     const blob = new Blob(recordedChunks, { type: 'video/webm' });
                     const url = URL.createObjectURL(blob);
                     const a = document.createElement('a');
-                    a.href = url; a.download = 'output.webm'; a.click();
+                    a.href = url; a.download = 'f-word-motion.webm'; a.click();
                 };
                 mediaRecorder.start();
                 isRecording = true;
-                btn.innerText = "STOP REC";
+                btn.innerText = "STOP RECORDING";
+                btn.style.borderColor = "#ff0000";
             } else {
                 mediaRecorder.stop();
                 isRecording = false;
-                btn.innerText = "REC START";
+                btn.innerText = "RECORD SYSTEM";
+                btn.style.borderColor = "#fff";
             }
         };
 
