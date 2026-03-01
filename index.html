@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
-    <title>Motion Visualizer Pro</title>
+    <title>Motion Visualizer - Deluxe</title>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
@@ -12,26 +12,25 @@
         .panel { flex: 1; position: relative; border-right: 1px solid #222; }
         #right-panel { border-right: none; background: #000; }
         #input_video { position: absolute; width: 1px; height: 1px; opacity: 0; }
-        #output_canvas { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); filter: brightness(1.2) contrast(1.1); }
+        #output_canvas { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
         .controls { position: absolute; bottom: 30px; left: 50%; transform: translateX(-50%); z-index: 10; }
         button { background: #fff; border: 2px solid #fff; padding: 12px 24px; cursor: pointer; font-weight: bold; transition: 0.2s; }
         button:hover { background: #000; color: #fff; }
-        .ui-label { position: absolute; top: 15px; left: 15px; font-size: 10px; color: #ff0055; letter-spacing: 2px; }
+        .ui-label { position: absolute; top: 15px; left: 15px; font-size: 10px; color: #00ffcc; letter-spacing: 2px; }
     </style>
 </head>
 <body>
 
     <div class="container">
         <div id="left-panel" class="panel">
-            <div class="ui-label">CAM_INPUT // ANALYSIS</div>
+            <div class="ui-label">CAM_FEED // HAND_TRACKING</div>
             <video id="input_video" playsinline></video>
             <canvas id="output_canvas"></canvas>
             <div class="controls">
-                <button id="record-btn">RECORD SYSTEM</button>
+                <button id="record-btn">SAVE MOTION</button>
             </div>
         </div>
         <div id="right-panel" class="panel">
-            <div class="ui-label">MOTION_FX // GENERATIVE</div>
             <div id="canvas-holder"></div>
         </div>
     </div>
@@ -42,8 +41,9 @@
         const outCtx = outCanvas.getContext('2d');
         
         let hands, camera;
-        let currentMode = "NONE"; // "NONE", "SHUT", "FUCK"
+        let currentMode = "NONE"; 
         let particles = [];
+        let shakeAmt = 0;
 
         function setup() {
             const c = createCanvas(windowWidth / 2, windowHeight);
@@ -55,22 +55,9 @@
             hands = new Hands({
                 locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
             });
-
-            hands.setOptions({
-                maxNumHands: 2,
-                modelComplexity: 1,
-                minDetectionConfidence: 0.6,
-                minTrackingConfidence: 0.6
-            });
-
+            hands.setOptions({ maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: 0.6, minTrackingConfidence: 0.6 });
             hands.onResults(onResults);
-
-            camera = new Camera(videoElement, {
-                onFrame: async () => {
-                    await hands.send({image: videoElement});
-                },
-                width: 640, height: 480
-            });
+            camera = new Camera(videoElement, { onFrame: async () => { await hands.send({image: videoElement}); }, width: 640, height: 480 });
             camera.start();
         }
 
@@ -82,33 +69,30 @@
             outCtx.drawImage(results.image, 0, 0, outCanvas.width, outCanvas.height);
             outCtx.restore();
 
-            // 모션 감지 로직
             currentMode = "NONE";
             if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
-                let shutCount = 0;
-                let fuckCount = 0;
+                let handsData = results.multiHandLandmarks;
 
-                for (const landmarks of results.multiHandLandmarks) {
-                    // 손가락 상태 체크 (y좌표가 작을수록 위쪽)
-                    const thumbUp = landmarks[4].y < landmarks[3].y;
-                    const indexUp = landmarks[8].y < landmarks[6].y;
-                    const middleUp = landmarks[12].y < landmarks[10].y;
-                    const ringUp = landmarks[16].y < landmarks[14].y;
-                    const pinkyUp = landmarks[20].y < landmarks[18].y;
-
-                    // 1. SHUT 포즈 (엄지, 검지, 중지만 펴짐)
-                    if (thumbUp && indexUp && middleUp && !ringUp && !pinkyUp) {
-                        shutCount++;
-                    }
+                // 1. FUCK 포즈 (중지만 펴짐)
+                if (handsData.some(h => h[12].y < h[10].y && h[8].y > h[6].y && h[16].y > h[14].y)) {
+                    currentMode = "FUCK";
+                }
+                // 2. MONEY 포즈 (엄지와 검지 끝이 매우 가까울 때)
+                else if (handsData.some(h => dist(h[4].x, h[4].y, h[8].x, h[8].y) < 0.04)) {
+                    currentMode = "MONEY";
+                }
+                // 3. SHUT 포즈 (두 손 엄지/검지/중지)
+                else if (handsData.length === 2) {
+                    let shutMatch = 0;
+                    handsData.forEach(h => { if(h[4].y < h[3].y && h[8].y < h[6].y && h[12].y < h[10].y) shutMatch++; });
+                    if (shutMatch === 2) currentMode = "SHUT";
                     
-                    // 2. FUCK 포즈 (중지만 펴짐)
-                    if (middleUp && !indexUp && !ringUp && !pinkyUp) {
-                        fuckCount++;
+                    // 4. HEART 포즈 (두 손의 검지 끝이 가깝고 엄지 끝이 가까울 때)
+                    let h1 = handsData[0], h2 = handsData[1];
+                    if (dist(h1[8].x, h1[8].y, h2[8].x, h2[8].y) < 0.1 && dist(h1[4].x, h1[4].y, h2[4].x, h2[4].y) < 0.1) {
+                        currentMode = "HEART";
                     }
                 }
-
-                if (shutCount >= 2) currentMode = "SHUT";
-                else if (fuckCount >= 1) currentMode = "FUCK";
             }
         }
 
@@ -116,30 +100,37 @@
             background(0);
             
             if (currentMode !== "NONE") {
-                // 입자 생성량 대폭 증가 및 크기 다양화
-                for (let i = 0; i < 5; i++) {
+                shakeAmt = (currentMode === "HEART" || currentMode === "FUCK") ? random(-5, 5) : 0;
+                
+                // 입자 생성
+                let spawnCount = (currentMode === "MONEY") ? 10 : 5;
+                for (let i = 0; i < spawnCount; i++) {
                     particles.push(new Part(currentMode));
                 }
                 
                 for (let i = particles.length - 1; i >= 0; i--) {
-                    particles[i].update(currentMode);
+                    particles[i].update();
                     particles[i].show();
                     if (particles[i].isDead()) particles.splice(i, 1);
                 }
 
-                // 텍스트 출력
+                // 텍스트 출력 (Shake 적용)
+                push();
+                translate(shakeAmt, shakeAmt);
                 fill(255);
                 noStroke();
                 textAlign(CENTER, CENTER);
                 
                 if (currentMode === "SHUT") {
-                    textSize(width * 0.07);
-                    text("SHUT YOUR BITCH ASS UP", width/2, height/2);
+                    textSize(width * 0.07); text("SHUT YOUR BITCH ASS UP", width/2, height/2);
                 } else if (currentMode === "FUCK") {
-                    textSize(width * 0.15);
-                    fill(255, 0, 80);
-                    text("FUCK YOU", width/2, height/2);
+                    textSize(width * 0.15); fill(255, 0, 80); text("FUCK YOU", width/2, height/2);
+                } else if (currentMode === "HEART") {
+                    textSize(width * 0.12); fill(255, 100, 200); text("I LOVE YOU", width/2, height/2);
+                } else if (currentMode === "MONEY") {
+                    textSize(width * 0.1); fill(0, 255, 100); text("GIVE ME MONEY", width/2, height/2);
                 }
+                pop();
             } else {
                 particles = [];
             }
@@ -147,43 +138,52 @@
 
         class Part {
             constructor(mode) {
-                this.pos = createVector(width/2, height/2);
-                this.vel = p5.Vector.random2D().mult(random(2, 10));
-                this.acc = createVector(0, 0);
-                this.life = 255;
-                this.size = random(3, 15); // 크기 다양화
-                this.angle = random(TWO_PI);
                 this.mode = mode;
+                this.life = 255;
+                this.size = random(5, 15);
                 
-                if (mode === "FUCK") {
-                    this.c = color(random(150, 255), 0, random(50, 150)); // 붉은색 계열
+                if (mode === "HEART") {
+                    // 하트 모양 궤적 생성 (수학적 하트 공식 활용)
+                    let t = random(TWO_PI);
+                    let hx = 16 * pow(sin(t), 3);
+                    let hy = -(13 * cos(t) - 5 * cos(2*t) - 2 * cos(3*t) - cos(4*t));
+                    this.pos = createVector(width/2 + hx*10, height/2 + hy*10);
+                    this.vel = p5.Vector.sub(this.pos, createVector(width/2, height/2)).mult(0.05);
+                    this.c = color(255, random(50, 150), random(150, 255)); // 핑크계열
+                } else if (mode === "MONEY") {
+                    // 꼭짓점 또는 중앙에서 발생
+                    let spawnPoints = [createVector(0,0), createVector(width,0), createVector(0,height), createVector(width,height), createVector(width/2, height/2)];
+                    this.pos = random(spawnPoints).copy();
+                    this.vel = p5.Vector.random2D().mult(random(2, 10));
+                    this.c = color(random(0, 100), 255, random(0, 100)); // 초록계열
                 } else {
-                    this.c = color(random(100, 255), random(100, 255), 255); // 무지개/푸른색 계열
+                    this.pos = createVector(width/2, height/2);
+                    this.vel = p5.Vector.random2D().mult(random(2, 8));
+                    this.c = color(random(255), random(255), 255);
                 }
+                this.angle = random(TWO_PI);
             }
             
-            update(mode) {
-                if (mode === "FUCK") {
-                    // 소용돌이 로직
-                    let r = dist(this.pos.x, this.pos.y, width/2, height/2);
-                    let xOffset = cos(this.angle) * 5;
-                    let yOffset = sin(this.angle) * 5;
-                    this.pos.x += xOffset;
-                    this.pos.y += yOffset;
+            update() {
+                if (this.mode === "FUCK") {
                     this.angle += 0.2;
-                    this.vel.mult(1.02); // 점점 빨라짐
+                    this.pos.x += cos(this.angle) * 3;
+                    this.pos.y += sin(this.angle) * 3;
                 }
-                
                 this.pos.add(this.vel);
-                this.life -= 4;
+                this.life -= 5;
             }
             
             show() {
                 noStroke();
                 fill(red(this.c), green(this.c), blue(this.c), this.life);
-                ellipse(this.pos.x, this.pos.y, this.size);
+                if (this.mode === "MONEY") {
+                    rectMode(CENTER);
+                    rect(this.pos.x, this.pos.y, this.size, this.size);
+                } else {
+                    ellipse(this.pos.x, this.pos.y, this.size);
+                }
             }
-            
             isDead() { return this.life < 0; }
         }
 
@@ -191,9 +191,8 @@
         let isRecording = false;
         let mediaRecorder;
         let recordedChunks = [];
-        const btn = document.getElementById('record-btn');
-        
-        btn.onclick = () => {
+        document.getElementById('record-btn').onclick = () => {
+            const btn = document.getElementById('record-btn');
             if (!isRecording) {
                 const stream = document.querySelector('#canvas-holder canvas').captureStream(30);
                 mediaRecorder = new MediaRecorder(stream, { mimeType: 'video/webm' });
@@ -202,24 +201,16 @@
                 mediaRecorder.onstop = () => {
                     const blob = new Blob(recordedChunks, { type: 'video/webm' });
                     const url = URL.createObjectURL(blob);
-                    const a = document.createElement('a');
-                    a.href = url; a.download = 'f-word-motion.webm'; a.click();
+                    const a = document.createElement('a'); a.href = url; a.download = 'motion_capture.webm'; a.click();
                 };
                 mediaRecorder.start();
-                isRecording = true;
-                btn.innerText = "STOP RECORDING";
-                btn.style.borderColor = "#ff0000";
+                isRecording = true; btn.innerText = "STOP & SAVE";
             } else {
-                mediaRecorder.stop();
-                isRecording = false;
-                btn.innerText = "RECORD SYSTEM";
-                btn.style.borderColor = "#fff";
+                mediaRecorder.stop(); isRecording = false; btn.innerText = "SAVE MOTION";
             }
         };
 
-        function windowResized() {
-            resizeCanvas(windowWidth / 2, windowHeight);
-        }
+        function windowResized() { resizeCanvas(windowWidth / 2, windowHeight); }
     </script>
 </body>
 </html>
