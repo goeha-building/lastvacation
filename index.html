@@ -11,31 +11,175 @@
     <style>
         body { margin: 0; background: #000; color: #fff; font-family: sans-serif; overflow: hidden; }
         .container { display: flex; width: 100vw; height: 100vh; }
-        .panel { flex: 1; position: relative; border: 1px solid #333; overflow: hidden; }
-        #left-panel { background: #111; display: flex; align-items: center; justify-content: center; }
-        #right-panel { background: #000; }
-        video { transform: rotateY(180deg); width: 100%; height: auto; display: none; }
-        canvas { width: 100% !important; height: 100% !important; object-fit: contain; }
-        .controls { position: absolute; bottom: 20px; left: 20px; z-index: 10; }
-        button { background: #fff; color: #000; border: none; padding: 10px 20px; cursor: pointer; font-weight: bold; }
-        button:hover { background: #ccc; }
-        .status { position: absolute; top: 20px; left: 20px; color: #0f0; font-size: 12px; }
+        .panel { flex: 1; position: relative; border-right: 1px solid #333; overflow: hidden; }
+        #left-panel { background: #111; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+        #right-panel { background: #000; border-right: none; }
+        video { display: none; } /* 비디오는 숨기고 캔버스에 그림 */
+        canvas { max-width: 100%; max-height: 100%; object-fit: contain; }
+        .controls { position: absolute; bottom: 30px; left: 50%; transform: translateX(-50%); z-index: 10; }
+        button { background: #fff; color: #000; border: none; padding: 12px 24px; cursor: pointer; font-weight: bold; border-radius: 4px; transition: 0.3s; }
+        button:hover { background: #ff4444; color: #fff; }
+        .status { position: absolute; top: 20px; left: 20px; color: #0f0; font-size: 12px; letter-spacing: 1px; }
     </style>
 </head>
 <body>
     <div class="container">
         <div id="left-panel" class="panel">
+            <div class="status">● SYSTEM RUNNING</div>
             <video id="input_video"></video>
             <canvas id="output_canvas"></canvas>
-            <div class="status">SYSTEM ACTIVE</div>
             <div class="controls">
                 <button id="record-btn">RECORD START</button>
             </div>
         </div>
         <div id="right-panel" class="panel">
-            <div id="canvas-container"></div>
-        </div>
+            </div>
     </div>
-    <script src="sketch.js"></script>
+
+    <script>
+        // 전역 변수 설정
+        let videoElement, outCanvas, outCtx;
+        let hands, faceDetection, camera;
+        let showEffect = false;
+        let particles = [];
+        let isRecording = false;
+        let mediaRecorder;
+        let recordedChunks = [];
+
+        // 1. p5.js 설정 (우측 화면)
+        function setup() {
+            const canvas = createCanvas(windowWidth / 2, windowHeight);
+            canvas.parent('right-panel');
+            
+            videoElement = document.getElementById('input_video');
+            outCanvas = document.getElementById('output_canvas');
+            outCtx = outCanvas.getContext('2d');
+
+            initMediaPipe();
+            setupRecording();
+        }
+
+        function initMediaPipe() {
+            hands = new Hands({
+                locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+            });
+            hands.setOptions({
+                maxNumHands: 2,
+                modelComplexity: 1,
+                minDetectionConfidence: 0.6,
+                minTrackingConfidence: 0.6
+            });
+            hands.onResults(onResults);
+
+            faceDetection = new FaceDetection({
+                locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_detection/${file}`
+            });
+            faceDetection.onResults(() => {}); // 얼굴 데이터는 추후 확장용
+
+            camera = new Camera(videoElement, {
+                onFrame: async () => {
+                    await hands.send({image: videoElement});
+                    await faceDetection.send({image: videoElement});
+                },
+                width: 640, height: 480
+            });
+            camera.start();
+        }
+
+        function onResults(results) {
+            // 좌측 캔버스 업데이트
+            outCanvas.width = videoElement.videoWidth;
+            outCanvas.height = videoElement.videoHeight;
+            outCtx.save();
+            outCtx.clearRect(0, 0, outCanvas.width, outCanvas.height);
+            outCtx.translate(outCanvas.width, 0);
+            outCtx.scale(-1, 1);
+            outCtx.drawImage(results.image, 0, 0, outCanvas.width, outCanvas.height);
+            outCtx.restore();
+
+            // 포즈 감지 (두 손 검지/중지/엄지)
+            showEffect = false;
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length === 2) {
+                let activeHands = 0;
+                results.multiHandLandmarks.forEach(landmarks => {
+                    const isIndexUp = landmarks[8].y < landmarks[6].y;
+                    const isMiddleUp = landmarks[12].y < landmarks[10].y;
+                    const isThumbUp = landmarks[4].y < landmarks[3].y;
+                    if (isIndexUp && isMiddleUp && isThumbUp) activeHands++;
+                });
+                if (activeHands === 2) showEffect = true;
+            }
+        }
+
+        function draw() {
+            background(0);
+            if (showEffect) {
+                if (particles.length < 100) particles.push(new Particle());
+                for (let i = particles.length - 1; i >= 0; i--) {
+                    particles[i].update();
+                    particles[i].show();
+                    if (particles[i].finished()) particles.splice(i, 1);
+                }
+                fill(255);
+                textAlign(CENTER, CENTER);
+                textSize(32);
+                text("SHUT YOUR BITCH ASS UP", width / 2, height / 2);
+            } else {
+                particles = [];
+            }
+        }
+
+        class Particle {
+            constructor() {
+                this.pos = createVector(width / 2, height / 2);
+                this.vel = p5.Vector.random2D().mult(random(2, 6));
+                this.acc = createVector(0, 0);
+                this.lifespan = 255;
+                this.color = color(random(255), random(255), 255);
+            }
+            update() {
+                let force = createVector(cos(frameCount * 0.1), sin(frameCount * 0.1));
+                this.acc.add(force.mult(0.1));
+                this.vel.add(this.acc);
+                this.pos.add(this.vel);
+                this.lifespan -= 4;
+            }
+            show() {
+                noStroke();
+                fill(red(this.color), green(this.color), blue(this.color), this.lifespan);
+                ellipse(this.pos.x, this.pos.y, 10);
+            }
+            finished() { return this.lifespan < 0; }
+        }
+
+        function setupRecording() {
+            const recordBtn = document.getElementById('record-btn');
+            recordBtn.onclick = () => {
+                if (!isRecording) {
+                    const stream = document.querySelector('#right-panel canvas').captureStream(30);
+                    mediaRecorder = new MediaRecorder(stream, { mimeType: 'video/webm' });
+                    recordedChunks = [];
+                    mediaRecorder.ondataavailable = e => recordedChunks.push(e.data);
+                    mediaRecorder.onstop = () => {
+                        const blob = new Blob(recordedChunks, { type: 'video/webm' });
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url; a.download = 'motion.webm'; a.click();
+                    };
+                    mediaRecorder.start();
+                    isRecording = true;
+                    recordBtn.innerText = "STOP & SAVE";
+                } else {
+                    mediaRecorder.stop();
+                    isRecording = false;
+                    recordBtn.innerText = "RECORD START";
+                }
+            };
+        }
+
+        function windowResized() {
+            resizeCanvas(windowWidth / 2, windowHeight);
+        }
+    </script>
 </body>
 </html>
