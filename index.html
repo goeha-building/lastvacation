@@ -2,180 +2,176 @@
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Motion Visualizer</title>
+    <title>Real-time Motion App</title>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_detection/face_detection.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
     <style>
-        body { margin: 0; background: #000; color: #fff; font-family: sans-serif; overflow: hidden; }
+        body { margin: 0; background: #000; color: #fff; font-family: 'Courier New', Courier, monospace; overflow: hidden; }
         .container { display: flex; width: 100vw; height: 100vh; }
-        .panel { flex: 1; position: relative; border-right: 1px solid #333; overflow: hidden; }
-        #left-panel { background: #111; display: flex; flex-direction: column; align-items: center; justify-content: center; }
-        #right-panel { background: #000; border-right: none; }
-        video { display: none; } /* 비디오는 숨기고 캔버스에 그림 */
-        canvas { max-width: 100%; max-height: 100%; object-fit: contain; }
-        .controls { position: absolute; bottom: 30px; left: 50%; transform: translateX(-50%); z-index: 10; }
-        button { background: #fff; color: #000; border: none; padding: 12px 24px; cursor: pointer; font-weight: bold; border-radius: 4px; transition: 0.3s; }
-        button:hover { background: #ff4444; color: #fff; }
-        .status { position: absolute; top: 20px; left: 20px; color: #0f0; font-size: 12px; letter-spacing: 1px; }
+        .panel { flex: 1; position: relative; border-right: 1px solid #444; }
+        #right-panel { border-right: none; background: #000; }
+        /* 비디오 숨기기 (캔버스에 직접 그림) */
+        #input_video { position: absolute; width: 1px; height: 1px; opacity: 0; }
+        #output_canvas { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
+        .controls { position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%); z-index: 10; }
+        button { background: #fff; border: none; padding: 10px 20px; cursor: pointer; font-weight: bold; text-transform: uppercase; }
+        button:active { background: #ff4444; color: #fff; }
+        .ui-label { position: absolute; top: 10px; left: 10px; font-size: 12px; color: #0f0; text-shadow: 0 0 5px #0f0; }
     </style>
 </head>
 <body>
+
     <div class="container">
         <div id="left-panel" class="panel">
-            <div class="status">● SYSTEM RUNNING</div>
-            <video id="input_video"></video>
+            <div class="ui-label">LIVE_FEED_01</div>
+            <video id="input_video" playsinline></video>
             <canvas id="output_canvas"></canvas>
             <div class="controls">
-                <button id="record-btn">RECORD START</button>
+                <button id="record-btn">REC START</button>
             </div>
         </div>
         <div id="right-panel" class="panel">
-            </div>
+            <div class="ui-label">VISUALIZER_CORE</div>
+            <div id="canvas-holder"></div>
+        </div>
     </div>
 
     <script>
-        // 전역 변수 설정
-        let videoElement, outCanvas, outCtx;
-        let hands, faceDetection, camera;
+        const videoElement = document.getElementById('input_video');
+        const outCanvas = document.getElementById('output_canvas');
+        const outCtx = outCanvas.getContext('2d');
+        
+        let hands, camera;
         let showEffect = false;
         let particles = [];
         let isRecording = false;
         let mediaRecorder;
         let recordedChunks = [];
 
-        // 1. p5.js 설정 (우측 화면)
+        // p5.js (우측 화면)
         function setup() {
-            const canvas = createCanvas(windowWidth / 2, windowHeight);
-            canvas.parent('right-panel');
-            
-            videoElement = document.getElementById('input_video');
-            outCanvas = document.getElementById('output_canvas');
-            outCtx = outCanvas.getContext('2d');
-
+            const c = createCanvas(windowWidth / 2, windowHeight);
+            c.parent('canvas-holder');
             initMediaPipe();
-            setupRecording();
         }
 
         function initMediaPipe() {
             hands = new Hands({
                 locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
             });
+
             hands.setOptions({
                 maxNumHands: 2,
                 modelComplexity: 1,
-                minDetectionConfidence: 0.6,
-                minTrackingConfidence: 0.6
+                minDetectionConfidence: 0.5,
+                minTrackingConfidence: 0.5
             });
-            hands.onResults(onResults);
 
-            faceDetection = new FaceDetection({
-                locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_detection/${file}`
-            });
-            faceDetection.onResults(() => {}); // 얼굴 데이터는 추후 확장용
+            hands.onResults(onResults);
 
             camera = new Camera(videoElement, {
                 onFrame: async () => {
+                    // 실시간성 핵심: 프레임마다 hands 데이터를 보냄
                     await hands.send({image: videoElement});
-                    await faceDetection.send({image: videoElement});
                 },
-                width: 640, height: 480
+                width: 640,
+                height: 480
             });
             camera.start();
         }
 
         function onResults(results) {
-            // 좌측 캔버스 업데이트
+            // 1. 좌측 웹캠 실시간 드로잉 (가장 중요)
             outCanvas.width = videoElement.videoWidth;
             outCanvas.height = videoElement.videoHeight;
+            
             outCtx.save();
             outCtx.clearRect(0, 0, outCanvas.width, outCanvas.height);
-            outCtx.translate(outCanvas.width, 0);
-            outCtx.scale(-1, 1);
             outCtx.drawImage(results.image, 0, 0, outCanvas.width, outCanvas.height);
             outCtx.restore();
 
-            // 포즈 감지 (두 손 검지/중지/엄지)
+            // 2. 포즈 감지 로직
             showEffect = false;
             if (results.multiHandLandmarks && results.multiHandLandmarks.length === 2) {
-                let activeHands = 0;
-                results.multiHandLandmarks.forEach(landmarks => {
-                    const isIndexUp = landmarks[8].y < landmarks[6].y;
-                    const isMiddleUp = landmarks[12].y < landmarks[10].y;
-                    const isThumbUp = landmarks[4].y < landmarks[3].y;
-                    if (isIndexUp && isMiddleUp && isThumbUp) activeHands++;
-                });
-                if (activeHands === 2) showEffect = true;
+                let checkCount = 0;
+                for (const landmarks of results.multiHandLandmarks) {
+                    // 검지(8), 중지(12), 엄지(4)가 펴져 있는지 간단 체크
+                    if (landmarks[8].y < landmarks[6].y && 
+                        landmarks[12].y < landmarks[10].y && 
+                        landmarks[4].y < landmarks[3].y) {
+                        checkCount++;
+                    }
+                }
+                if (checkCount === 2) showEffect = true;
             }
         }
 
         function draw() {
             background(0);
+            
             if (showEffect) {
-                if (particles.length < 100) particles.push(new Particle());
+                // 파티클 생성
+                if (particles.length < 120) particles.push(new Part());
+                
                 for (let i = particles.length - 1; i >= 0; i--) {
-                    particles[i].update();
-                    particles[i].show();
-                    if (particles[i].finished()) particles.splice(i, 1);
+                    particles[i].run();
+                    if (particles[i].isDead()) particles.splice(i, 1);
                 }
+
+                // 텍스트 출력
                 fill(255);
+                noStroke();
                 textAlign(CENTER, CENTER);
-                textSize(32);
-                text("SHUT YOUR BITCH ASS UP", width / 2, height / 2);
+                textSize(width * 0.08);
+                text("SHUT YOUR BITCH ASS UP", width/2, height/2);
             } else {
                 particles = [];
             }
         }
 
-        class Particle {
+        class Part {
             constructor() {
-                this.pos = createVector(width / 2, height / 2);
-                this.vel = p5.Vector.random2D().mult(random(2, 6));
-                this.acc = createVector(0, 0);
-                this.lifespan = 255;
-                this.color = color(random(255), random(255), 255);
+                this.pos = createVector(width/2, height/2);
+                this.vel = p5.Vector.random2D().mult(random(2, 8));
+                this.acc = createVector(0, 0.05);
+                this.life = 255;
+                this.c = color(random(100,255), random(100,255), 255);
             }
-            update() {
-                let force = createVector(cos(frameCount * 0.1), sin(frameCount * 0.1));
-                this.acc.add(force.mult(0.1));
+            run() {
                 this.vel.add(this.acc);
                 this.pos.add(this.vel);
-                this.lifespan -= 4;
-            }
-            show() {
+                this.life -= 5;
                 noStroke();
-                fill(red(this.color), green(this.color), blue(this.color), this.lifespan);
+                fill(red(this.c), green(this.c), blue(this.c), this.life);
                 ellipse(this.pos.x, this.pos.y, 10);
             }
-            finished() { return this.lifespan < 0; }
+            isDead() { return this.life < 0; }
         }
 
-        function setupRecording() {
-            const recordBtn = document.getElementById('record-btn');
-            recordBtn.onclick = () => {
-                if (!isRecording) {
-                    const stream = document.querySelector('#right-panel canvas').captureStream(30);
-                    mediaRecorder = new MediaRecorder(stream, { mimeType: 'video/webm' });
-                    recordedChunks = [];
-                    mediaRecorder.ondataavailable = e => recordedChunks.push(e.data);
-                    mediaRecorder.onstop = () => {
-                        const blob = new Blob(recordedChunks, { type: 'video/webm' });
-                        const url = URL.createObjectURL(blob);
-                        const a = document.createElement('a');
-                        a.href = url; a.download = 'motion.webm'; a.click();
-                    };
-                    mediaRecorder.start();
-                    isRecording = true;
-                    recordBtn.innerText = "STOP & SAVE";
-                } else {
-                    mediaRecorder.stop();
-                    isRecording = false;
-                    recordBtn.innerText = "RECORD START";
-                }
-            };
-        }
+        // 녹화 로직
+        const btn = document.getElementById('record-btn');
+        btn.onclick = () => {
+            if (!isRecording) {
+                const stream = document.querySelector('#canvas-holder canvas').captureStream(30);
+                mediaRecorder = new MediaRecorder(stream, { mimeType: 'video/webm' });
+                recordedChunks = [];
+                mediaRecorder.ondataavailable = e => recordedChunks.push(e.data);
+                mediaRecorder.onstop = () => {
+                    const blob = new Blob(recordedChunks, { type: 'video/webm' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url; a.download = 'output.webm'; a.click();
+                };
+                mediaRecorder.start();
+                isRecording = true;
+                btn.innerText = "STOP REC";
+            } else {
+                mediaRecorder.stop();
+                isRecording = false;
+                btn.innerText = "REC START";
+            }
+        };
 
         function windowResized() {
             resizeCanvas(windowWidth / 2, windowHeight);
